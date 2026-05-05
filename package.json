@@ -4,7 +4,7 @@
   "description": "Route your coding agent to the fastest free LLM in real time.",
   "type": "module",
   "bin": {
-    "omfm": "./dist/cli.js"
+    "omfm": "dist/cli.js"
   },
   "files": [
     "dist",
