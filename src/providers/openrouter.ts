@@ -93,6 +93,7 @@ export async function postOpenRouterChatCompletion(options: {
   body: unknown;
   stream?: boolean;
   fetchImpl?: FetchLike;
+  signal?: AbortSignal;
 }): Promise<Response> {
   const fetchImpl = options.fetchImpl ?? fetch;
   return fetchImpl('https://openrouter.ai/api/v1/chat/completions', {
@@ -104,6 +105,7 @@ export async function postOpenRouterChatCompletion(options: {
       'X-OpenRouter-Title': 'oh-my-free-models',
     },
     body: JSON.stringify(options.body),
+    signal: options.signal,
   });
 }
 
@@ -112,6 +114,7 @@ export async function postOpenRouterAnthropicMessage(options: {
   body: unknown;
   headers?: Headers;
   fetchImpl?: FetchLike;
+  signal?: AbortSignal;
 }): Promise<Response> {
   const fetchImpl = options.fetchImpl ?? fetch;
   const anthropicVersion = options.headers?.get('anthropic-version') ?? '2023-06-01';
@@ -125,5 +128,6 @@ export async function postOpenRouterAnthropicMessage(options: {
       'X-OpenRouter-Title': 'oh-my-free-models',
     },
     body: JSON.stringify(options.body),
+    signal: options.signal,
   });
 }

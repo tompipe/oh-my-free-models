@@ -75,6 +75,7 @@ export async function postNvidiaChatCompletion(options: {
   apiKey: string;
   body: unknown;
   fetchImpl?: FetchLike;
+  signal?: AbortSignal;
 }): Promise<Response> {
   const fetchImpl = options.fetchImpl ?? fetch;
   return fetchImpl(NVIDIA_CHAT_COMPLETIONS_URL, {
@@ -84,5 +85,6 @@ export async function postNvidiaChatCompletion(options: {
       'Content-Type': 'application/json',
     },
     body: JSON.stringify(options.body),
+    signal: options.signal,
   });
 }
