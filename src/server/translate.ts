@@ -30,17 +30,24 @@ export interface OpenAIChatRequest {
 export function extractTextContent(content: unknown): string {
   if (typeof content === 'string') return content;
   if (!Array.isArray(content)) return '';
-  return content
-    .map((block) => {
-      if (typeof block === 'string') return block;
-      if (block && typeof block === 'object' && (block as { type?: unknown }).type === 'text') {
-        return String((block as { text?: unknown }).text ?? '');
-      }
+  let result = '';
+  for (let i = 0; i < content.length; i++) {
+    const block = content[i];
+    let text = '';
+    if (typeof block === 'string') {
+      text = block;
+    } else if (block && typeof block === 'object' && (block as { type?: unknown }).type === 'text') {
+      text = String((block as { text?: unknown }).text ?? '');
+    } else {
       const type = block && typeof block === 'object' ? String((block as { type?: unknown }).type ?? 'unknown') : 'unknown';
       throw new Error(`Unsupported Anthropic content block: ${type}`);
-    })
-    .filter(Boolean)
-    .join('\n');
+    }
+    if (text) {
+      if (result) result += '\n' + text;
+      else result = text;
+    }
+  }
+  return result;
 }
 
 function isRecord(value: unknown): value is Record<string, any> {
@@ -85,15 +92,21 @@ function openAIContentFromBlocks(blocks: Record<string, unknown>[]): string | Ar
 function stringifyToolResult(content: unknown): string {
   if (typeof content === 'string') return content;
   if (!Array.isArray(content)) return String(content ?? '');
-  return content
-    .map((block) => {
-      if (typeof block === 'string') return block;
-      if (block && typeof block === 'object' && (block as { type?: unknown }).type === 'text') {
-        return String((block as { text?: unknown }).text ?? '');
-      }
-      return JSON.stringify(block ?? null);
-    })
-    .join('\n');
+  let result = '';
+  for (let i = 0; i < content.length; i++) {
+    const block = content[i];
+    let text = '';
+    if (typeof block === 'string') {
+      text = block;
+    } else if (block && typeof block === 'object' && (block as { type?: unknown }).type === 'text') {
+      text = String((block as { text?: unknown }).text ?? '');
+    } else {
+      text = JSON.stringify(block ?? null);
+    }
+    if (result) result += '\n' + text;
+    else result = text;
+  }
+  return result;
 }
 
 function toolUseToOpenAICall(block: Record<string, any>): Record<string, unknown> {
@@ -241,15 +254,23 @@ export function mapStopReason(reason: unknown): string {
 function contentFromOpenAI(content: unknown): string {
   if (typeof content === 'string') return content;
   if (!Array.isArray(content)) return '';
-  return content
-    .map((part) => {
-      if (typeof part === 'string') return part;
-      if (isRecord(part) && part.type === 'text') return String(part.text ?? '');
-      if (isRecord(part) && typeof part.text === 'string') return part.text;
-      return '';
-    })
-    .filter(Boolean)
-    .join('\n');
+  let result = '';
+  for (let i = 0; i < content.length; i++) {
+    const part = content[i];
+    let text = '';
+    if (typeof part === 'string') {
+      text = part;
+    } else if (isRecord(part) && part.type === 'text') {
+      text = String(part.text ?? '');
+    } else if (isRecord(part) && typeof part.text === 'string') {
+      text = part.text;
+    }
+    if (text) {
+      if (result) result += '\n' + text;
+      else result = text;
+    }
+  }
+  return result;
 }
 
 function parseToolArguments(value: unknown): Record<string, unknown> {

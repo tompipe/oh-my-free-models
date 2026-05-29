@@ -71,16 +71,30 @@ function emitServerLog(logger: ServerOptions['requestLogger'], event: ServerLogE
   }
 }
 
+const DEFAULT_MAX_PAYLOAD_BYTES = process.env.OMFM_MAX_PAYLOAD_BYTES ? parseInt(process.env.OMFM_MAX_PAYLOAD_BYTES, 10) || 100 * 1024 * 1024 : 100 * 1024 * 1024;
+
 function stringValue(value: unknown): string | undefined {
   return typeof value === 'string' ? value : undefined;
 }
 
-async function readBody(req: IncomingMessage): Promise<any> {
+async function readBody(req: IncomingMessage, maxPayloadBytes: number = DEFAULT_MAX_PAYLOAD_BYTES): Promise<any> {
   const chunks: Buffer[] = [];
-  for await (const chunk of req) chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+  let length = 0;
+  for await (const chunk of req) {
+    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    length += buffer.length;
+    if (length > maxPayloadBytes) {
+      throw Object.assign(new Error('Payload too large'), { statusCode: 413 });
+    }
+    chunks.push(buffer);
+  }
   const text = Buffer.concat(chunks).toString('utf8');
   if (!text) return {};
-  return JSON.parse(text);
+  try {
+    return JSON.parse(text);
+  } catch (error) {
+    throw Object.assign(new Error('Invalid JSON payload'), { statusCode: 400 });
+  }
 }
 
 function headersFromIncoming(req: IncomingMessage): Headers {
@@ -210,11 +224,15 @@ export function createOmfmServer(options: ServerOptions = {}): http.Server {
   const env = options.env ?? process.env;
   const fetchImpl = options.fetchImpl;
   const maxRetries = options.maxRetries ?? 2;
-  const requestLogger = options.requestLogger;
+    const requestLogger = options.requestLogger;
   let nextRequestId = 0;
 
   return http.createServer(async (req, res) => {
     const id = ++nextRequestId;
+    const controller = new AbortController();
+    req.on('close', () => {
+      if (!res.writableEnded) controller.abort();
+    });
     const startedAt = Date.now();
     let requestedModel: string | undefined;
     let routedModel: string | undefined;
@@ -292,8 +310,8 @@ export function createOmfmServer(options: ServerOptions = {}): http.Server {
           const started = Date.now();
           const upstreamBody = withUpstreamModel(body, model);
           const upstream = sourceOf(model) === 'nvidia'
-            ? await postNvidiaChatCompletion({ apiKey, body: upstreamBody, fetchImpl })
-            : await postOpenRouterChatCompletion({ apiKey, body: upstreamBody, stream, fetchImpl });
+            ? await postNvidiaChatCompletion({ apiKey, body: upstreamBody, fetchImpl, signal: controller.signal })
+            : await postOpenRouterChatCompletion({ apiKey, body: upstreamBody, stream, fetchImpl, signal: controller.signal });
           if (upstream.ok) {
             store.recordSuccess(modelId, Date.now() - started);
             if (stream) {
@@ -348,7 +366,7 @@ export function createOmfmServer(options: ServerOptions = {}): http.Server {
           const started = Date.now();
           if (sourceOf(model) === 'nvidia') {
             const fallbackBody = anthropicToOpenAI(body, upstreamId(model));
-            const upstream = await postNvidiaChatCompletion({ apiKey, body: fallbackBody, fetchImpl });
+            const upstream = await postNvidiaChatCompletion({ apiKey, body: fallbackBody, fetchImpl, signal: controller.signal });
             if (upstream.ok) {
               store.recordSuccess(modelId, Date.now() - started);
               await writeOpenAIAsAnthropic(upstream, res, body, modelId, (data) => recordSuccessfulUsage(store, modelId, upstream.status, data));
@@ -359,10 +377,10 @@ export function createOmfmServer(options: ServerOptions = {}): http.Server {
           }
 
           const upstreamBody = withUpstreamModel(body, model);
-          let upstream = await postOpenRouterAnthropicMessage({ apiKey, body: upstreamBody, headers: headersFromIncoming(req), fetchImpl });
+          let upstream = await postOpenRouterAnthropicMessage({ apiKey, body: upstreamBody, headers: headersFromIncoming(req), fetchImpl, signal: controller.signal });
           if (!upstream.ok && (upstream.status === 404 || upstream.status === 405)) {
             const fallbackBody = anthropicToOpenAI(body, upstreamId(model));
-            upstream = await postOpenRouterChatCompletion({ apiKey, body: fallbackBody, stream, fetchImpl });
+            upstream = await postOpenRouterChatCompletion({ apiKey, body: fallbackBody, stream, fetchImpl, signal: controller.signal });
             if (upstream.ok) {
               store.recordSuccess(modelId, Date.now() - started);
               await writeOpenAIAsAnthropic(upstream, res, body, modelId, (data) => recordSuccessfulUsage(store, modelId, upstream.status, data));
@@ -394,6 +412,7 @@ export function createOmfmServer(options: ServerOptions = {}): http.Server {
 
       json(res, 404, { error: { message: `Unsupported endpoint: ${method} ${url.pathname}` } });
     } catch (error) {
+      if (error instanceof Error && error.name === 'AbortError') return;
       const statusCode = typeof (error as { statusCode?: unknown }).statusCode === 'number' ? (error as { statusCode: number }).statusCode : 500;
       json(res, statusCode, { error: { message: error instanceof Error ? error.message : String(error) } });
     }
